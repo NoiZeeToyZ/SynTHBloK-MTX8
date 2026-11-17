@@ -25,7 +25,10 @@
 #include "Matrix8_ui.hpp"
 #include "Matrix8_seq.hpp"   // KEY / SCALE, internal tempo, RAND
 #include "JamOwner.hpp"
+#include "GridPort.hpp"
+#include "SongPlay.hpp"
 #include "SongLink.hpp"
+#include "TempoLink.hpp"
 #include <thread>
 #include <chrono>
 namespace {
@@ -46,6 +49,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
 
     midi::InputQueue midiIn;
     midi::Output midiOut;
+    gridctl::Port ctl;   // which grid controller (GridPort.hpp): JAM bytes pass straight through
     bool slowSend = false;
     jamown::Link jam;   // the JAM follows the last clicked module (JamOwner.hpp)
 
@@ -57,7 +61,8 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
     float rollHold = 0.125f;
     bool pendingReset = false;
     dsp::SchmittTrigger clkTrig, rstTrig, rstBtnTrig, runTrig, clrTrig, randTrig;
-    m8seq::IntClock intClock;     // the BPM knob's clock while CLOCK is unpatched
+    m8seq::IntClock intClock;     // (unused since the TEMPO LINK, Nov 16 2026)
+    tempolink::Link tlink;        // the shared internal clock while CLOCK is unpatched
     dsp::PulseGenerator pulse[8];
 
     // Shown on the panel: RUN/RESET light from their jacks when patched, clock tempo on the display.
@@ -172,7 +177,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
             case CC_DOWN: stepParam(LEN_PARAM, -1, 1, 8, false); break;
             case CC_LEFT: stepParam(BANK_PARAM, -1, 1, 8, false); break;
             case CC_RIGHT: stepParam(BANK_PARAM, 1, 1, 8, false); break;
-            case CC_PLAY: params[RUN_PARAM].setValue(params[RUN_PARAM].getValue() > 0.5f ? 0.f : 1.f); break;
+            case CC_PLAY: if (songplay::pressPlay()) break; params[RUN_PARAM].setValue(params[RUN_PARAM].getValue() > 0.5f ? 0.f : 1.f); break;   // with a COMPOSER: its RUN (SongPlay.hpp)
             case CC_REC: params[LEARN_PARAM].setValue(params[LEARN_PARAM].getValue() > 0.5f ? 0.f : 1.f); break;
             case CC_PREV: stepParam(PAT_PARAM, -1, 1, 8, true); break;
             case CC_NEXT: stepParam(PAT_PARAM, 1, 1, 8, true); break;
@@ -200,8 +205,8 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
         m8seq::randomize([]() { return random::uniform(); }, s, pat, val);
     }
 
-    void sendNote(int note, int vel) { midi::Message m; m.bytes = {0x90, (uint8_t)note, (uint8_t)clamp(vel, 0, 127)}; if (slowSend) std::this_thread::sleep_for(std::chrono::microseconds(400)); midiOut.sendMessage(m); }
-    void sendCC(int cc, int v) { midi::Message m; m.bytes = {0xB0, (uint8_t)cc, (uint8_t)clamp(v, 0, 127)}; if (slowSend) std::this_thread::sleep_for(std::chrono::microseconds(400)); midiOut.sendMessage(m); }
+    void sendNote(int note, int vel) { midi::Message m; m.bytes = {0x90, (uint8_t)note, (uint8_t)clamp(vel, 0, 127)}; if (slowSend) std::this_thread::sleep_for(std::chrono::microseconds(400)); ctl.send(midiOut, m, padNote(0, 0)); }
+    void sendCC(int cc, int v) { midi::Message m; m.bytes = {0xB0, (uint8_t)cc, (uint8_t)clamp(v, 0, 127)}; if (slowSend) std::this_thread::sleep_for(std::chrono::microseconds(400)); ctl.send(midiOut, m, padNote(0, 0)); }
 
     void clearLeds() {
         for (int r = 0; r < 8; r++) for (int c = 0; c < 8; c++) sendNote(padNote(r, c), 0);
@@ -214,13 +219,13 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
     void onBypass(const BypassEvent& e) override { if (jam.active) clearLeds(); jamown::release(id); jam.active = false; }
     void onUnBypass(const UnBypassEvent& e) override { for (int i = 0; i < kNumLed; i++) lastLed[i] = -1; resync = 0.f; }
     // Rack closing / the module deleted: lights off, paced so the JAM takes every message
-    ~SynTHBloKMatrix8() { songlink::leave(this); if (jam.active) { slowSend = true; clearLeds(); } jamown::release(id); }
+    ~SynTHBloKMatrix8() { tlink.leave(id); songlink::leave(this); if (jam.active) { slowSend = true; clearLeds(); } jamown::release(id); }
 
     int desiredLed(int idx, bool running) {
         if (idx == kKnobLed) return (int)std::round(params[knobParam()].getValue() * 127.f);
         if (idx >= 88) {
             switch (kBtnCC[idx - 88]) {
-                case CC_PLAY: return running ? 127 : 0;
+                case CC_PLAY: return songplay::light(running ? 127 : 0);   // the COMPOSER's RUN when there is one
                 case CC_REC: return params[LEARN_PARAM].getValue() > 0.5f ? 127 : 0;
                 case CC_TEMPO: return resetFlash > 0.f ? 127 : 0;
                 case CC_GRID: return params[RANGE_PARAM].getValue() > 0.5f ? 127 : 0;
@@ -281,7 +286,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
         if (own > 0) for (int i = 0; i < kNumLed; i++) lastLed[i] = -1;
         else if (own < 0) clearLeds();
         midi::Message msg;
-        while (midiIn.tryPop(&msg, args.frame)) {
+        while (ctl.pop(midiIn, midiOut, &msg, args.frame, padNote(0, 0), jam.active)) {
             if (!jam.active) continue;
             if (msg.bytes.size() < 3) continue;
             int st = msg.bytes[0] & 0xf0, a = msg.bytes[1], b = msg.bytes[2];
@@ -332,15 +337,24 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
         running = params[RUN_PARAM].getValue() > 0.5f;
         bool rst = rstTrig.process(inputs[RESET_INPUT].getVoltage()) | rstBtnTrig.process(params[RESET_PARAM].getValue()) | jamReset | cwReset();
         jamReset = false;
+        // TEMPO LINK (Nov 16 2026, Nick: "lock them"): with CLOCK unpatched, one shared clock with MTX-1 & co.; a RESET on
+        // any linked module resets this one too
+        bool ext = inputs[CLOCK_INPUT].isConnected();
+        tempolink::Out lo;
+        if (ext) tlink.leave(id);
+        else {
+            float b = params[BPM_PARAM].getValue();
+            lo = tlink.process(id, args.sampleTime, b, rst);
+            if (b != params[BPM_PARAM].getValue()) params[BPM_PARAM].setValue(b);
+            if (lo.reset) rst = true;
+        }
         if (rst) { step = -1; pendingReset = true; resetFlash = 0.15f; roll.stop(); }
         resetFlash = std::max(0.f, resetFlash - args.sampleTime);
         if (clrTrig.process(params[CLEAR_PARAM].getValue())) clearPattern(curPat());
         if (randTrig.process(params[RAND_PARAM].getValue())) randomizeAll();
         int rollN = 1;
         // the CLOCK jack, or the BPM knob when it is unpatched (as DUO / DRUM)
-        bool ext = inputs[CLOCK_INPUT].isConnected();
-        if (rst) intClock.timer = 0.f;
-        bool edge = ext ? clkTrig.process(inputs[CLOCK_INPUT].getVoltage()) : intClock.process(args.sampleTime, params[BPM_PARAM].getValue());
+        bool edge = ext ? clkTrig.process(inputs[CLOCK_INPUT].getVoltage()) : lo.clock;   // the jack, or the linked clock
         bool clk = cwClock(edge, rollN);   // CLOKWORX's tick when it owns this
         bool silentStep = cwSilentStep(rollN);   // CLOKWORX STOP: the step advances, nothing plays
         sinceClock += args.sampleTime;
@@ -456,7 +470,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
         json_object_set_new(r, "solo", json_string(ss.c_str()));
         json_object_set_new(r, "keyed", json_boolean(true));   // saved with KEY / SCALE (older patches: CHROMATIC in C)
         json_object_set_new(r, "in", midiIn.toJson());
-        json_object_set_new(r, "out", midiOut.toJson());
+        json_object_set_new(r, "out", midiOut.toJson()); ctl.toJson(r);
         return r;
     }
     void dataFromJson(json_t* r) override {
@@ -481,7 +495,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
             params[SCALE_PARAM].setValue((float)m8seq::kChromatic);
         }
         if (json_t* j = json_object_get(r, "in")) midiIn.fromJson(j);
-        if (json_t* j = json_object_get(r, "out")) midiOut.fromJson(j);
+        if (json_t* j = json_object_get(r, "out")) midiOut.fromJson(j); ctl.fromJson(r);
     }
 };
 
@@ -894,6 +908,7 @@ struct SynTHBloKMatrix8Widget : ModuleWidget {
         SynTHBloKMatrix8* m = getModule<SynTHBloKMatrix8>();
         if (!m) return;
         menu->addChild(new MenuSeparator);
+        m->ctl.appendMenu(menu);   // Controller: Auto / Maschine JAM / APC mini mk2 / Launchpad ...
         auto indexItem = [&](const std::string& text, int paramId, std::vector<std::string> labels) {
             menu->addChild(createIndexSubmenuItem(text, labels,
                 [=]() { return (size_t)(m->params[paramId].getValue() - 1.f); },
