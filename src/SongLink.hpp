@@ -5,6 +5,7 @@
 // the member's level, and the member reports its output peak for the strip's meter. The requests are
 // atomics the member takes in its own process() (songPoll), so nothing crosses engine threads unguarded.
 #include "plugin.hpp"
+#include "OledUi.hpp"   // (BLOX THEMES: MTX parts themed)
 #include "SharedSlot.hpp"
 #include "UserHold.hpp"
 #include <atomic>
@@ -17,6 +18,42 @@ namespace songlink {
 // loop actions a section can hold for a module with a looper
 enum Loop { L_NONE, L_PLAY, L_STOP, L_REC, L_ONCE, L_COUNT };
 static const char* const kLoopName[L_COUNT] = {"-", "PLAY", "STOP", "REC", "ONCE"};
+
+// SONG CLOCK (Nov 25 2026, Nick: "COMPOSER without RANDROYD ... start and stop all connected modules"): each running
+// COMPOSER publishes its clock here (one entry per COMPOSER, by module id); a member it conducts whose CLOCK jack is
+// unpatched (and no CLOKWORX lane owns it) steps on the COMPOSER's 16ths, resets with it and follows its RUN and BPM.
+// A patched CLOCK (RANDROYD's cables) always wins, so RANDROYD's racks play exactly as before. Members read it only;
+// nothing here is written into a member, so plugins built before it never see it. Own key: never shares a layout.
+namespace songclock {
+static const int kN = 8;
+struct Entry {
+    std::atomic<int64_t> id{-1};          // the COMPOSER's module id (-1: free)
+    std::atomic<uint32_t> beat{0};        // its heartbeat (every sample it runs): stale = gone / bypassed
+    std::atomic<uint32_t> ticks{0};       // 16ths played
+    std::atomic<uint32_t> resetGen{0};    // bumped on RESET (and on RUN: the song from the top)
+    std::atomic<int> tickInBar{-1};       // the last 16th's place in its bar (0 = a downbeat)
+    std::atomic<bool> running{false};
+    std::atomic<float> bpm{120.f};
+};
+struct Slot { Entry e[kN]; };
+inline Slot& slot() { static Slot* s = sharedslot::get<Slot>("SYNTHBLOK_SONGCLOCK_1"); return *s; }
+inline Entry* find(int64_t id) {
+    if (id < 0) return NULL;
+    Slot& s = slot();
+    for (int i = 0; i < kN; i++) if (s.e[i].id.load() == id) return &s.e[i];
+    return NULL;
+}
+inline Entry* claim(int64_t id) {
+    if (Entry* e = find(id)) return e;
+    Slot& s = slot();
+    for (int i = 0; i < kN; i++) {
+        int64_t none = -1;
+        if (s.e[i].id.compare_exchange_strong(none, id)) { s.e[i].running.store(false); return &s.e[i]; }
+    }
+    return NULL;   // 8 COMPOSERs already publishing
+}
+inline void leave(int64_t id) { if (Entry* e = find(id)) { e->running.store(false); e->id.store(-1); } }
+}  // namespace songclock
 
 struct Member {
     Module* self = NULL;
@@ -50,12 +87,12 @@ struct Member {
     // the step starting now (1: a plain step).
     bool cwClock(bool jackEdge, int& rollN) {
         rollN = 1;
-        if (!cwOwned()) return jackEdge;
+        if (!cwOwned()) return scOn ? scEdge : jackEdge;   // free of CLOKWORX: the COMPOSER's 16th while it feeds this
         if (cwTicks.exchange(0) <= 0) return false;
         rollN = std::max(0, std::min(8, cwRollN.exchange(1)));   // 0: a SILENT step (CLOKWORX STOP): it advances, plays nothing
         return true;
     }
-    bool cwReset() { return cwOwned() && cwResetReq.exchange(false); }
+    bool cwReset() { return cwOwned() ? cwResetReq.exchange(false) : scOn && scRst; }
     // what the member really played (its step, hits so far): CLOKWORX's step ring and its CLOKWORX_LOG test hook
     std::atomic<int> cwStepNow{-1}, cwHitCount{0};
     void cwNote(int step, int hits = 1) { cwStepNow.store(step, std::memory_order_relaxed); cwHitCount.fetch_add(hits, std::memory_order_relaxed); }
@@ -77,6 +114,7 @@ struct Member {
         if (p >= 0 && !holdOn) songSetPattern(p);
         int a = reqLoop.exchange(L_NONE);
         if (a != L_NONE && !holdOn) songDoLoop(a);
+        songFollow(dt);
         float tg = songMuted.load() && !holdOn ? 0.f : clamp(songLevel.load(), 0.f, 1.f);
         songGainSm += (tg - songGainSm) * std::min(1.f, dt / 0.005f);
         songDt = dt;
@@ -92,6 +130,55 @@ struct Member {
     // (at the END: only the member's own songPoll reads these, so plugins built before them still line up)
     uint32_t holdGen = 0;
     bool holdOn = false;
+
+    // SONG CLOCK (see songclock above; member-side only). The member names its CLOCK jack, RUN switch and BPM knob
+    // in its constructor (-1: it has none); songPoll() then runs songFollow() every sample.
+    int scClockIn = -1, scRunParam = -1, scBpmParam = -1;
+    bool scOn = false, scEdge = false, scRst = false, scWaitBar = false, scRunWas = false;
+    uint32_t scTicks = 0, scResets = 0, scBeat = 0;
+    int64_t scOwner = -1;
+    float scQuiet = 0.f, scPeriod = 0.125f;
+    void songFollowSetup(int clockIn, int runParam, int bpmParam = -1) { scClockIn = clockIn; scRunParam = runParam; scBpmParam = bpmParam; }
+    // fed by a COMPOSER now: its 16ths replace the member's own clock (as CLOKWORX's do)
+    bool songFed() { return cwOwned() || scOn; }
+    float songPeriod() { return cwOwned() ? cwPeriod.load() : scPeriod; }
+    void scSetRun(bool run) {
+        if (self && scRunParam >= 0) self->params[scRunParam].setValue(run ? 1.f : 0.f);
+    }
+    void songFollow(float dt) {
+        scEdge = scRst = false;
+        if (!self || scClockIn < 0) { scOn = false; return; }
+        int64_t own = songOwner.load();
+        songclock::Entry* e = NULL;
+        if (own >= 0 && songLinked.load() && !cwOwned() && !self->inputs[scClockIn].isConnected()) e = songclock::find(own);
+        if (e) {   // a COMPOSER that stopped running process() (bypassed, removed) lets the member go after 0.1 s
+            uint32_t b = e->beat.load();
+            if (b != scBeat || own != scOwner) { scBeat = b; scQuiet = 0.f; }
+            else if ((scQuiet += dt) > 0.1f) e = NULL;
+        }
+        if (!e) { scOn = false; return; }
+        const bool run = e->running.load();
+        const uint32_t rg = e->resetGen.load(), t = e->ticks.load();
+        scPeriod = 15.f / std::max(1.f, e->bpm.load());
+        if (!scOn || own != scOwner) {   // just joined: take the song's RUN; mid-song, come in on its next downbeat
+            scOn = true; scOwner = own;
+            scResets = rg; scTicks = t; scRunWas = run; scWaitBar = run;
+            scSetRun(run);
+        } else {
+            if (run != scRunWas) { scRunWas = run; scSetRun(run); if (!run) scWaitBar = false; }
+            if (rg != scResets) { scResets = rg; scRst = true; scWaitBar = false; }
+            if (t != scTicks) {
+                scTicks = t;
+                if (!scWaitBar) scEdge = true;
+                else if (e->tickInBar.load() == 0) { scWaitBar = false; scRst = scEdge = true; }   // step 1 on the bar
+            }
+        }
+        if (scBpmParam >= 0 && self->paramQuantities[scBpmParam]) {   // the BPM knob shows the song's tempo
+            ParamQuantity* q = self->paramQuantities[scBpmParam];
+            float b = clamp(e->bpm.load(), q->getMinValue(), q->getMaxValue());
+            if (std::fabs(self->params[scBpmParam].getValue() - b) > 0.01f) self->params[scBpmParam].setValue(b);
+        }
+    }
 };
 
 // a tiny spin lock (held for a few list operations at a time). Not std::mutex: the registry is shared by several
@@ -162,7 +249,7 @@ inline NVGcolor rowColor(int r, int a = 255) {
     static const unsigned char C[8][3] = {{0xff, 0xd7, 0x14}, {0xff, 0xb0, 0x00}, {0xff, 0x8c, 0x00}, {0xff, 0x6a, 0x00},
                                           {0xf0, 0x40, 0x00}, {0xcc, 0x1a, 0x00}, {0xb3, 0x17, 0x00}, {0xc2, 0x1a, 0x00}};
     r = std::max(0, std::min(7, r));
-    return nvgRGBA(C[r][0], C[r][1], C[r][2], a);
+    return oled::tRGBA(C[r][0], C[r][1], C[r][2], a);
 }
 // a small "ROW n" pill in the row's colour, top right of a conducted module (hidden while no Composer has it)
 struct RowBadge : widget::Widget {
@@ -190,7 +277,7 @@ struct RowBadge : widget::Widget {
         nvgFontFaceId(args.vg, font->handle);
         nvgFontSize(args.vg, box.size.y * 0.72f);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFillColor(args.vg, nvgRGB(0x14, 0x0c, 0x04));
+        nvgFillColor(args.vg, oled::tRGB(0x14, 0x0c, 0x04));
         nvgText(args.vg, box.size.x * 0.5f, box.size.y * 0.5f + 0.5f, t, NULL);
     }
 };
@@ -198,3 +285,4 @@ struct RowBadge : widget::Widget {
 }  // namespace songlink
 
 SHAREDSLOT_WARM(kSongLinkWarm, songlink::reg())
+SHAREDSLOT_WARM(kSongClockWarm, songlink::songclock::slot())

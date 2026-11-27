@@ -15,6 +15,7 @@
 //   The new params sit at the END of the list, so older patches load unchanged (as CHROMATIC in C: see dataFromJson).
 // ============================================================================
 #include "plugin.hpp"
+#include "OledUi.hpp"   // (BLOX THEMES: MTX parts themed)
 #include "KnobTicks.hpp"
 #include <cmath>
 #include <cstdio>
@@ -99,6 +100,7 @@ struct SynTHBloKMatrix8 : Module, songlink::Member {
     SynTHBloKMatrix8() {
         config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
         songlink::join(this, this, "MTX-8", 8, false);
+        songFollowSetup(CLOCK_INPUT, RUN_PARAM, BPM_PARAM);   // SONG CLOCK: a COMPOSER steps / runs it while CLOCK is unpatched
         cwRolls = true;
         configParam(LEN_PARAM, 1.f, 8.f, 8.f, "Pattern length (steps)");
         configParam(PAT_PARAM, 1.f, 8.f, 1.f, "Pattern");
@@ -518,7 +520,7 @@ struct JSPad : OpaqueWidget {
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, box.size.x, box.size.y, 1.6f);
         NVGcolor fill = on ? onCol : kIdle;
-        if (playing) fill = on ? nvgLerpRGBA(onCol, nvgRGB(0xff, 0xff, 0xff), 0.55f) : nvgLerpRGBA(kIdle, col, 0.45f);
+        if (playing) fill = on ? nvgLerpRGBA(onCol, oled::tRGB(0xff, 0xff, 0xff), 0.55f) : nvgLerpRGBA(kIdle, col, 0.45f);
         nvgFillColor(args.vg, fill);
         nvgFill(args.vg);
         nvgStrokeColor(args.vg, col);
@@ -542,15 +544,15 @@ struct JSTinyBtn : app::ParamWidget {
         float cx = box.size.x * 0.5f, cy = box.size.y * 0.5f;
         nvgBeginPath(args.vg);
         nvgCircle(args.vg, cx, cy, mm2px(1.9f));
-        nvgFillColor(args.vg, nvgRGB(0x1a, 0x1a, 0x1a));
+        nvgFillColor(args.vg, oled::tRGB(0x1a, 0x1a, 0x1a));
         nvgFill(args.vg);
-        nvgStrokeColor(args.vg, nvgRGBA(0xff, 0x7b, 0x00, 0xe0));
+        nvgStrokeColor(args.vg, oled::tRGBA(0xff, 0x7b, 0x00, 0xe0));
         nvgStrokeWidth(args.vg, 1.f);
         nvgStroke(args.vg);
         if (on) {
             nvgBeginPath(args.vg);
             nvgCircle(args.vg, cx, cy, mm2px(1.15f));
-            nvgFillColor(args.vg, nvgRGB(0xff, 0x7a, 0x00));
+            nvgFillColor(args.vg, oled::tRGB(0xff, 0x7a, 0x00));
             nvgFill(args.vg);
         }
     }
@@ -595,7 +597,7 @@ struct JStrip : OpaqueWidget {
     void draw(const DrawArgs& args) override {
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, box.size.x, box.size.y, 1.6f);
-        nvgFillColor(args.vg, nvgRGB(0x14, 0x14, 0x14));
+        nvgFillColor(args.vg, oled::tRGB(0x14, 0x14, 0x14));
         nvgFill(args.vg);
         NVGcolor col = kPatOnColor[module ? module->bank() : 0];   // strips take the selected bank's colour
         float v = get(), h = (box.size.y - 3.f) * v;
@@ -645,11 +647,11 @@ struct JTitle : TransparentWidget {
         nvgFontFaceId(args.vg, font->handle);
         nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_BASELINE);
         nvgFontSize(args.vg, 11.f);
-        nvgFillColor(args.vg, nvgRGB(0xff, 0xff, 0xff));
+        nvgFillColor(args.vg, oled::tRGB(0xff, 0xff, 0xff));
         nvgText(args.vg, 0.f, mm2px(3.5f), "SynTHBloK", NULL);
         nvgFontSize(args.vg, 10.f);
         nvgTextLetterSpacing(args.vg, 0.8f);
-        nvgFillColor(args.vg, nvgRGB(0xff, 0x7a, 0x00));
+        nvgFillColor(args.vg, oled::tRGB(0xff, 0x7a, 0x00));
         nvgText(args.vg, 0.f, mm2px(6.4f), "MTX-8", NULL);
     }
 };
@@ -668,11 +670,11 @@ struct JClockDisplay : TransparentWidget {
         float W = box.size.x, H = box.size.y;
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, W, H, 2.f);
-        nvgFillColor(args.vg, nvgRGBA(14, 9, 3, 255));
+        nvgFillColor(args.vg, oled::tRGBA(14, 9, 3, 255));
         nvgFill(args.vg);
         std::shared_ptr<window::Font> font = APP->window->uiFont;
         if (font) {
-            NVGcolor amb = nvgRGBA(255, 190, 90, 255), dim = nvgRGBA(255, 190, 90, 130);
+            NVGcolor amb = oled::tRGBA(255, 190, 90, 255), dim = oled::tRGBA(255, 190, 90, 130);
             float bigFont = std::max(10.f, H * 0.27f), smallFont = std::max(7.5f, H * 0.2f);
             char bpm[24] = "120 BPM", info[32] = "STEP 1/8";
             bool run = module ? module->running : true;
@@ -718,20 +720,20 @@ struct JClockDisplay : TransparentWidget {
             nvgFillColor(args.vg, dim);
             nvgText(args.vg, 5.f, H * kY2, info, NULL);
             nvgTextAlign(args.vg, NVG_ALIGN_RIGHT | NVG_ALIGN_MIDDLE);
-            nvgFillColor(args.vg, run ? nvgRGBA(120, 230, 90, 255) : dim);
+            nvgFillColor(args.vg, run ? oled::tRGBA(120, 230, 90, 255) : dim);
             nvgText(args.vg, W - 5.f, H * kY2, run ? "RUN" : "STOP", NULL);
             // the dividers round the KEY | SCALE line
             nvgBeginPath(args.vg);
             for (float y : {(kY0 + kY1) * 0.5f, (kY1 + kY2) * 0.5f}) { nvgMoveTo(args.vg, 4.f, H * y); nvgLineTo(args.vg, W - 4.f, H * y); }
             nvgMoveTo(args.vg, W * kSplit, H * (kY0 + kY1) * 0.5f + 2.f); nvgLineTo(args.vg, W * kSplit, H * (kY1 + kY2) * 0.5f - 2.f);
             nvgStrokeWidth(args.vg, 0.6f);
-            nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 50));
+            nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 50));
             nvgStroke(args.vg);
         }
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.5f, 0.5f, W - 1.f, H - 1.f, 2.f);
         nvgStrokeWidth(args.vg, 0.8f);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 80));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 80));
         nvgStroke(args.vg);
     }
     // step what sits under (x, y) by d: BPM (top line, left), KEY or SCALE (middle line)

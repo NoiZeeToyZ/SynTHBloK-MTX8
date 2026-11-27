@@ -1,6 +1,7 @@
 #pragma once
 // Shared JAM constants and panel widgets for SynTHBloK MATRIX-8 and MATRIX FORGE.
 #include "plugin.hpp"
+#include "OledUi.hpp"   // (BLOX THEMES: MTX parts themed)
 #include <cmath>
 #include <string>
 
@@ -40,13 +41,13 @@ static const int kNumLed = kKnobLed + 1;   // 0..63 pads, 64..71 scenes, 72..79 
 // Yellow -> deep dark red, one colour per pattern 1..8 and per strip bank A..H
 // (same order as the JAM scene row).
 static const NVGcolor kPatColor[8] = {
-    nvgRGB(0xff, 0xd7, 0x14), nvgRGB(0xff, 0xb0, 0x00), nvgRGB(0xff, 0x8c, 0x00), nvgRGB(0xff, 0x6a, 0x00),
-    nvgRGB(0xf0, 0x40, 0x00), nvgRGB(0xcc, 0x1a, 0x00), nvgRGB(0x99, 0x00, 0x00), nvgRGB(0x5c, 0x00, 0x00)};
+    oled::tRGB(0xff, 0xd7, 0x14), oled::tRGB(0xff, 0xb0, 0x00), oled::tRGB(0xff, 0x8c, 0x00), oled::tRGB(0xff, 0x6a, 0x00),
+    oled::tRGB(0xf0, 0x40, 0x00), oled::tRGB(0xcc, 0x1a, 0x00), oled::tRGB(0x99, 0x00, 0x00), oled::tRGB(0x5c, 0x00, 0x00)};
 // On state (selected button, pad hit, strip fill): same as kPatColor, except 7 and 8 use
 // shades of page 6's red instead of the deep reds, bright enough to read when lit.
 static const NVGcolor kPatOnColor[8] = {
-    nvgRGB(0xff, 0xd7, 0x14), nvgRGB(0xff, 0xb0, 0x00), nvgRGB(0xff, 0x8c, 0x00), nvgRGB(0xff, 0x6a, 0x00),
-    nvgRGB(0xf0, 0x40, 0x00), nvgRGB(0xcc, 0x1a, 0x00), nvgRGB(0xb3, 0x17, 0x00), nvgRGB(0xc2, 0x1a, 0x00)};
+    oled::tRGB(0xff, 0xd7, 0x14), oled::tRGB(0xff, 0xb0, 0x00), oled::tRGB(0xff, 0x8c, 0x00), oled::tRGB(0xff, 0x6a, 0x00),
+    oled::tRGB(0xf0, 0x40, 0x00), oled::tRGB(0xcc, 0x1a, 0x00), oled::tRGB(0xb3, 0x17, 0x00), oled::tRGB(0xc2, 0x1a, 0x00)};
 static const NVGcolor kIdle = nvgRGB(0x1c, 0x1c, 0x1c);
 
 // Selected = filled in its on colour with a dark label; others = outline and label in its colour.
@@ -65,7 +66,7 @@ static void drawColorButton(const widget::Widget::DrawArgs& args, Vec size, int 
     nvgFontFaceId(args.vg, font->handle);
     nvgFontSize(args.vg, fontSize);
     nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-    nvgFillColor(args.vg, sel ? nvgRGB(0x10, 0x10, 0x10) : col);
+    nvgFillColor(args.vg, sel ? oled::tRGB(0x10, 0x10, 0x10) : col);
     nvgText(args.vg, size.x * 0.5f, size.y * 0.5f, label, NULL);
 }
 
@@ -77,7 +78,7 @@ struct JRandBtn : app::ParamWidget {
         if (layer != 1) return;
         ParamQuantity* pq = getParamQuantity();
         bool held = pq && pq->getValue() > 0.5f;
-        NVGcolor g = nvgRGB(120, 230, 90);
+        NVGcolor g = oled::tRGB(120, 230, 90);
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, box.size.x, box.size.y, 1.4f);
         nvgFillColor(args.vg, held ? g : kIdle);
@@ -90,7 +91,7 @@ struct JRandBtn : app::ParamWidget {
         nvgFontFaceId(args.vg, font->handle);
         nvgFontSize(args.vg, 6.f);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFillColor(args.vg, held ? nvgRGB(0x10, 0x10, 0x10) : g);
+        nvgFillColor(args.vg, held ? oled::tRGB(0x10, 0x10, 0x10) : g);
         nvgText(args.vg, box.size.x * 0.5f, box.size.y * 0.5f, "RAND", NULL);
     }
     // UNDO (Nov 16 2026, Gemini's QA: "RANDOM can't be undone"): the module as it was before the press is kept, and a
@@ -150,13 +151,13 @@ struct JMidiDisplay : TransparentWidget {
         float W = box.size.x, H = box.size.y;
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, W, H, 2.f);
-        nvgFillColor(args.vg, nvgRGBA(14, 9, 3, 255));
+        nvgFillColor(args.vg, oled::tRGBA(14, 9, 3, 255));
         nvgFill(args.vg);
         nvgBeginPath(args.vg);
         nvgMoveTo(args.vg, 5.f, H * 0.5f);
         nvgLineTo(args.vg, W - 5.f, H * 0.5f);
         nvgStrokeWidth(args.vg, 0.6f);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 40));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 40));
         nvgStroke(args.vg);
         std::shared_ptr<window::Font> font = APP->window->uiFont;
         if (font) {
@@ -169,7 +170,7 @@ struct JMidiDisplay : TransparentWidget {
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.5f, 0.5f, W - 1.f, H - 1.f, 2.f);
         nvgStrokeWidth(args.vg, 0.8f);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 80));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 80));
         nvgStroke(args.vg);
     }
     void drawPort(const DrawArgs& args, midi::Port* port, const char* title, float y, float W, float h) {
@@ -178,7 +179,7 @@ struct JMidiDisplay : TransparentWidget {
             if (midi::Driver* d = port->getDriver()) drv = d->getName();
             if (port->getDeviceId() >= 0) dev = port->getDeviceName(port->getDeviceId());
         } else dev = "Maschine Jam - 1";
-        NVGcolor dim = nvgRGBA(255, 190, 90, 130);
+        NVGcolor dim = oled::tRGBA(255, 190, 90, 130);
         nvgFontSize(args.vg, 6.5f);
         nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
         nvgFillColor(args.vg, dim);
@@ -187,7 +188,7 @@ struct JMidiDisplay : TransparentWidget {
         nvgText(args.vg, W - 5.f, y + h * 0.3f, drv.c_str(), NULL);
         nvgFontSize(args.vg, 8.5f);
         nvgTextAlign(args.vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-        nvgFillColor(args.vg, nvgRGBA(255, 190, 90, 255));
+        nvgFillColor(args.vg, oled::tRGBA(255, 190, 90, 255));
         nvgText(args.vg, 5.f, y + h * 0.68f, dev.c_str(), NULL);
     }
     void onButton(const ButtonEvent& e) override {
@@ -213,7 +214,7 @@ struct JLabel : TransparentWidget {
         nvgFontSize(args.vg, 7.f);
         nvgTextLetterSpacing(args.vg, 0.6f);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFillColor(args.vg, nvgRGB(0xbb, 0xbb, 0xbb));
+        nvgFillColor(args.vg, oled::tRGB(0xbb, 0xbb, 0xbb));
         nvgText(args.vg, box.size.x * 0.5f, box.size.y * 0.5f, text.c_str(), NULL);
     }
 };
@@ -239,18 +240,18 @@ struct JAmberBtn : app::ParamWidget {
     }
     void draw(const DrawArgs& args) override {
         bool on = lit();
-        NVGcolor onFill = green ? nvgRGBA(120, 230, 90, 235) : nvgRGBA(255, 112, 15, 235);
+        NVGcolor onFill = green ? oled::tRGBA(120, 230, 90, 235) : oled::tRGBA(255, 112, 15, 235);
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, box.size.x, box.size.y, 1.4f);
-        nvgFillColor(args.vg, on ? onFill : nvgRGBA(40, 25, 8, 255));
+        nvgFillColor(args.vg, on ? onFill : oled::tRGBA(40, 25, 8, 255));
         nvgFill(args.vg);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, on ? 255 : 120));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, on ? 255 : 120));
         nvgStrokeWidth(args.vg, on ? 1.2f : 0.8f);
         nvgStroke(args.vg);
         if (jackPatched()) {
             nvgBeginPath(args.vg);
             nvgCircle(args.vg, box.size.x - 2.6f, 2.6f, 1.3f);
-            nvgFillColor(args.vg, on ? nvgRGBA(20, 10, 2, 255) : nvgRGBA(255, 190, 90, 255));
+            nvgFillColor(args.vg, on ? oled::tRGBA(20, 10, 2, 255) : oled::tRGBA(255, 190, 90, 255));
             nvgFill(args.vg);
         }
         std::shared_ptr<window::Font> font = APP->window->uiFont;
@@ -258,7 +259,7 @@ struct JAmberBtn : app::ParamWidget {
         nvgFontFaceId(args.vg, font->handle);
         nvgFontSize(args.vg, fontSize);
         nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
-        nvgFillColor(args.vg, on ? nvgRGBA(20, 10, 2, 255) : nvgRGBA(255, 190, 90, 255));
+        nvgFillColor(args.vg, on ? oled::tRGBA(20, 10, 2, 255) : oled::tRGBA(255, 190, 90, 255));
         nvgText(args.vg, box.size.x * 0.5f, box.size.y * 0.5f, label, NULL);
     }
     void onButton(const ButtonEvent& e) override {
@@ -289,13 +290,13 @@ struct JKnobRing : TransparentWidget {
         float a0 = M_PI * 0.75f, a1 = M_PI * 2.25f;
         nvgBeginPath(args.vg);
         nvgArc(args.vg, cx, cy, rr, a0, a1, NVG_CW);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 40));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 40));
         nvgStrokeWidth(args.vg, 2.f);
         nvgStroke(args.vg);
         if (v > 0.001f) {
             nvgBeginPath(args.vg);
             nvgArc(args.vg, cx, cy, rr, a0, a0 + (a1 - a0) * v, NVG_CW);
-            nvgStrokeColor(args.vg, nvgRGBA(255, 112, 15, 235));
+            nvgStrokeColor(args.vg, oled::tRGBA(255, 112, 15, 235));
             nvgStrokeWidth(args.vg, 2.f);
             nvgStroke(args.vg);
         }
@@ -316,9 +317,9 @@ struct JLoopArrow : OpaqueWidget {
         bool on = flash > 0.f;
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, W, H, 1.4f);
-        nvgFillColor(args.vg, on ? nvgRGBA(255, 112, 15, 235) : nvgRGBA(40, 25, 8, 255));
+        nvgFillColor(args.vg, on ? oled::tRGBA(255, 112, 15, 235) : oled::tRGBA(40, 25, 8, 255));
         nvgFill(args.vg);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, on ? 255 : 120));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, on ? 255 : 120));
         nvgStrokeWidth(args.vg, on ? 1.2f : 0.8f);
         nvgStroke(args.vg);
         float cx = W * 0.5f, cy = H * 0.5f, s = std::min(W, H) * 0.22f;
@@ -327,7 +328,7 @@ struct JLoopArrow : OpaqueWidget {
         nvgLineTo(args.vg, cx + s * 1.2f, cy + dir * s);
         nvgLineTo(args.vg, cx - s * 1.2f, cy + dir * s);
         nvgClosePath(args.vg);
-        nvgFillColor(args.vg, on ? nvgRGBA(20, 10, 2, 255) : nvgRGBA(255, 190, 90, 255));
+        nvgFillColor(args.vg, on ? oled::tRGBA(20, 10, 2, 255) : oled::tRGBA(255, 190, 90, 255));
         nvgFill(args.vg);
         flash = std::max(0.f, flash - 0.1f);
     }
@@ -353,7 +354,7 @@ struct JLoopDisplay : OpaqueWidget {
         float W = box.size.x, H = box.size.y;
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.f, 0.f, W, H, 2.f);
-        nvgFillColor(args.vg, nvgRGBA(14, 9, 3, 255));
+        nvgFillColor(args.vg, oled::tRGBA(14, 9, 3, 255));
         nvgFill(args.vg);
         int n = len();
         int step = module ? module->step : 2;
@@ -365,7 +366,7 @@ struct JLoopDisplay : OpaqueWidget {
             nvgFontFaceId(args.vg, font->handle);
             nvgFontSize(args.vg, 11.f);
             nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_TOP);
-            nvgFillColor(args.vg, nvgRGBA(255, 190, 90, 255));
+            nvgFillColor(args.vg, oled::tRGBA(255, 190, 90, 255));
             nvgText(args.vg, W * 0.5f, top, b, NULL);
             top += 12.f;
         }
@@ -376,13 +377,13 @@ struct JLoopDisplay : OpaqueWidget {
             bool in = i + off < n, head = run && step == i + off;
             nvgBeginPath(args.vg);
             nvgRoundedRect(args.vg, 3.f, top + i * ch + 0.6f, W - 6.f, ch - 1.2f, 0.8f);
-            nvgFillColor(args.vg, head ? nvgRGBA(255, 255, 255, 235) : in ? nvgRGBA(255, 112, 15, 220) : nvgRGBA(40, 25, 8, 255));
+            nvgFillColor(args.vg, head ? oled::tRGBA(255, 255, 255, 235) : in ? oled::tRGBA(255, 112, 15, 220) : oled::tRGBA(40, 25, 8, 255));
             nvgFill(args.vg);
         }
         nvgBeginPath(args.vg);
         nvgRoundedRect(args.vg, 0.5f, 0.5f, W - 1.f, H - 1.f, 2.f);
         nvgStrokeWidth(args.vg, 0.8f);
-        nvgStrokeColor(args.vg, nvgRGBA(255, 180, 90, 80));
+        nvgStrokeColor(args.vg, oled::tRGBA(255, 180, 90, 80));
         nvgStroke(args.vg);
     }
     // click a step cell to loop up to it
